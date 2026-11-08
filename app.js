@@ -20,6 +20,7 @@ const catOf = id =>
   id === 'maas' ? { n: 'Maaş', e: '💰', c: '#22c55e' } :
   id === 'gelir' ? { n: 'Gelir', e: '💵', c: '#22c55e' } :
   id === 'odeme' ? { n: 'Ekstre ödemesi', e: '🧾', c: '#64748b' } :
+  id === 'transfer' ? { n: 'Transfer', e: '🔁', c: '#64748b' } :
   id === 'acilis' ? { n: 'Açılış (kategorisiz)', e: '📌', c: '#64748b' } :
   (CATS.find(c => c.id === id) || CATS[CATS.length - 1]);
 
@@ -105,9 +106,16 @@ const srcLabel = s => {
   return kind === 'acc' ? `${acc(id)?.name ?? '?'} · Banka` : `${card(id)?.name ?? '?'} · Kredi`;
 };
 
+const xferLabel = t => `${acc(t.src.slice(4))?.name ?? '?'} → ${acc(t.to.slice(4))?.name ?? '?'}`;
+
 function accBalance(id) {
   let b = acc(id).opening;
   for (const t of S.tx) {
+    if (t.type === 'xfer') { // hesaplar arası transfer: bir hesaptan düşer, diğerine eklenir
+      if (t.src === 'acc:' + id) b -= t.amount;
+      if (t.to === 'acc:' + id) b += t.amount;
+      continue;
+    }
     const sp = srcParse(t.src);
     if (sp.kind !== 'acc' || sp.id !== id) continue;
     b += t.type === 'inc' ? t.amount : -t.amount; // exp ve pay hesaptan düşer
@@ -241,8 +249,8 @@ function list() {
     const c = catOf(t.cat), inc = t.type === 'inc';
     h += `<div class="row" data-act="detail" data-id="${t.id}"><div class="emo" style="background:${c.c}33">${c.e}</div>
       <div class="grow"><div class="t">${esc(t.note) || c.n}${t.inst > 1 ? `<span class="pill">${t.inst} taksit</span>` : ''}</div>
-      <div class="m">${c.n} · ${srcLabel(t.src)}</div></div>
-      <div class="amt ${inc ? 'in' : ''}">${inc ? '+' : t.type === 'pay' ? '' : '−'}${fmt(t.amount)}</div></div>`;
+      <div class="m">${t.type === 'xfer' ? xferLabel(t) : `${c.n} · ${srcLabel(t.src)}`}</div></div>
+      <div class="amt ${inc ? 'in' : ''}">${inc ? '+' : (t.type === 'pay' || t.type === 'xfer') ? '' : '−'}${fmt(t.amount)}</div></div>`;
   }
   return h;
 }
@@ -395,19 +403,23 @@ function render() {
 /* ---------- ekleme formu ---------- */
 function newForm() {
   const lastSrc = [...S.tx].reverse().find(t => t.type === 'exp')?.src;
-  return { type: 'exp', amount: '', cat: 'yemek', src: lastSrc || 'card:' + S.cards[0].id, acc: S.settings.salaryAcc, date: ymd(new Date()), note: '', inst: 1 };
+  return { type: 'exp', amount: '', cat: 'yemek', src: lastSrc || 'card:' + S.cards[0].id, acc: S.settings.salaryAcc, date: ymd(new Date()), note: '', inst: 1,
+    from: S.accounts[0].id, to: (S.accounts[1] || S.accounts[0]).id };
 }
 function addModal() {
   const f = ui.form;
   const srcs = [...S.accounts.map(a => ({ v: 'acc:' + a.id, l: `${a.name} Banka` })), ...S.cards.map(c => ({ v: 'card:' + c.id, l: `${c.name} Kredi` }))];
   let h = `<div class="sheet"><h3>${f.edit ? 'İşlemi düzenle' : 'Yeni işlem'}</h3>
-  <div class="seg"><button class="${f.type === 'exp' ? 'on' : ''}" data-act="ftype" data-v="exp">Harcama</button><button class="${f.type === 'inc' ? 'on' : ''}" data-act="ftype" data-v="inc">Gelir</button></div>
+  <div class="seg"><button class="${f.type === 'exp' ? 'on' : ''}" data-act="ftype" data-v="exp">Harcama</button><button class="${f.type === 'inc' ? 'on' : ''}" data-act="ftype" data-v="inc">Gelir</button><button class="${f.type === 'xfer' ? 'on' : ''}" data-act="ftype" data-v="xfer">Transfer</button></div>
   <input class="amount" id="f-amount" data-f="amount" inputmode="decimal" placeholder="0,00" value="${esc(f.amount)}">`;
   if (f.type === 'exp') {
     h += `<div class="field" style="margin-top:12px"><label>Nereden ödendi</label><div class="chips">${srcs.map(s => `<button class="chip ${f.src === s.v ? 'on' : ''}" data-act="fset" data-k="src" data-v="${s.v}">${s.l}</button>`).join('')}</div></div>
     <div class="field"><label>Kategori</label><div class="chips">${CATS.map(c => `<button class="chip ${f.cat === c.id ? 'on' : ''}" data-act="fset" data-k="cat" data-v="${c.id}">${c.e} ${c.n}</button>`).join('')}</div></div>`;
     if (f.src.startsWith('card:'))
       h += `<div class="field"><label>Taksit sayısı (1 = tek çekim)</label><div class="chips">${[1, 2, 3, 4, 6, 9, 12].map(n => `<button class="chip ${+f.inst === n ? 'on' : ''}" data-act="fset" data-k="inst" data-v="${n}">${n}</button>`).join('')}</div></div>`;
+  } else if (f.type === 'xfer') {
+    h += `<div class="field" style="margin-top:12px"><label>Hangi hesaptan</label><div class="chips">${S.accounts.map(a => `<button class="chip ${f.from === a.id ? 'on' : ''}" data-act="fset" data-k="from" data-v="${a.id}">${a.name}</button>`).join('')}</div></div>
+    <div class="field"><label>Hangi hesaba</label><div class="chips">${S.accounts.map(a => `<button class="chip ${f.to === a.id ? 'on' : ''}" data-act="fset" data-k="to" data-v="${a.id}">${a.name}</button>`).join('')}</div></div>`;
   } else {
     h += `<div class="field" style="margin-top:12px"><label>Hangi hesaba</label><div class="chips">${S.accounts.map(a => `<button class="chip ${f.acc === a.id ? 'on' : ''}" data-act="fset" data-k="acc" data-v="${a.id}">${a.name}</button>`).join('')}</div></div>`;
   }
@@ -426,7 +438,16 @@ const A = {
   pk: d => { const T = totals(); ui.listPk = addM(ui.listPk || T.pk, +d.d); render(); },
   openAdd: () => { ui.form = newForm(); openModal(addModal()); setTimeout(() => $('#f-amount')?.focus(), 50); },
   ftype: d => { ui.form.type = d.v; openModal(addModal()); },
-  fset: d => { ui.form[d.k] = d.k === 'inst' ? +d.v : d.v; if (d.k === 'src' && !d.v.startsWith('card:')) ui.form.inst = 1; openModal(addModal()); },
+  fset: d => {
+    ui.form[d.k] = d.k === 'inst' ? +d.v : d.v;
+    if (d.k === 'src' && !d.v.startsWith('card:')) ui.form.inst = 1;
+    // Transferde kaynak ve hedef aynı hesap olamaz: diğerini otomatik değiştir
+    if ((d.k === 'from' || d.k === 'to') && ui.form.from === ui.form.to) {
+      const other = S.accounts.find(a => a.id !== d.v)?.id;
+      if (other) ui.form[d.k === 'from' ? 'to' : 'from'] = other;
+    }
+    openModal(addModal());
+  },
   close: closeModal,
   save: () => {
     const f = ui.form, amount = num(f.amount);
@@ -440,6 +461,9 @@ const A = {
         const c = card(f.src.slice(5)), left = c.limit - cardUsed(c.id);
         if (amount > left) toast(`Dikkat: ${c.name} kalan limit ${fmt(left)}`);
       }
+    } else if (f.type === 'xfer') {
+      if (f.from === f.to) return toast('Farklı iki hesap seç');
+      t.cat = 'transfer'; t.src = 'acc:' + f.from; t.to = 'acc:' + f.to;
     } else { t.cat = 'gelir'; t.src = 'acc:' + f.acc; }
     S.tx.push(t); persist(); closeModal(); render();
     if (!$('#toast').classList.contains('show')) toast('Kaydedildi');
@@ -449,7 +473,7 @@ const A = {
     const c = catOf(t.cat);
     openModal(`<div class="sheet"><h3>${c.e} ${esc(t.note) || c.n}</h3>
       <div class="row"><div class="grow"><div class="m">Tutar</div><div class="t">${fmt(t.amount)}${t.inst > 1 ? ` · ${t.inst} taksit (${fmt(t.amount / t.inst)}/ay)` : ''}</div></div></div>
-      <div class="row"><div class="grow"><div class="m">Kaynak</div><div class="t">${srcLabel(t.src)}</div></div></div>
+      <div class="row"><div class="grow"><div class="m">${t.type === 'xfer' ? 'Transfer' : 'Kaynak'}</div><div class="t">${t.type === 'xfer' ? xferLabel(t) : srcLabel(t.src)}</div></div></div>
       <div class="row"><div class="grow"><div class="m">Tarih</div><div class="t">${trDateY(pd(t.date))}</div></div></div>
       ${t.type === 'exp' ? `<button class="btn sec" data-act="edit" data-id="${t.id}">Düzenle</button>` : ''}
       <button class="btn del" data-act="del" data-id="${t.id}">Sil</button><button class="btn sec" data-act="close">Kapat</button></div>`);
