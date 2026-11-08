@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Bütçem">
+<meta name="theme-color" content="#0f172a">
+<title>Bütçem</title>
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main id="app"></main>
+<button id="fab" data-act="openAdd" aria-label="Harcama ekle">+</button>
+<nav>
+  <button data-act="nav" data-v="home">Ana</button>
+  <button data-act="nav" data-v="list">İşlemler</button>
+  <button data-act="nav" data-v="reports">Raporlar</button>
+  <button data-act="nav" data-v="cards">Kartlar</button>
+  <button data-act="nav" data-v="settings">Ayarlar</button>
+</nav>
+<div id="modal"></div>
+<div id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>
