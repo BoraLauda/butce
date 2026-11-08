@@ -381,7 +381,8 @@ function settings() {
   <input type="file" id="file" accept="application/json,.json" hidden>
   <h2>Tehlikeli bölge</h2>
   <button class="btn del" data-act="reset">Tüm veriyi sil ve baştan başla</button>
-  <p class="lbl" style="margin-top:18px">Veriler yalnızca bu cihazdaki tarayıcıda saklanır. Düzenli yedek al.</p>`;
+  <p class="lbl" style="margin-top:18px">Veriler yalnızca bu cihazdaki tarayıcıda saklanır. Düzenli yedek al.</p>
+  <p class="lbl">iPhone'da Safari ile ana ekrandaki uygulamanın verisi ayrıdır. Sadece ana ekrandaki uygulamayı kullan.</p>`;
   return h;
 }
 
@@ -528,4 +529,6 @@ A.finishSetup = () => {
 S = load();
 render();
 if (!S.setupDone) openModal(setupModal());
+// Tarayıcıdan "veriyi silme" iste (destekleyen cihazlarda kalıcı depolama)
+try { navigator.storage?.persist?.(); } catch (e) {}
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
