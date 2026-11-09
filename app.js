@@ -185,7 +185,27 @@ function rollover() {
 }
 
 /* ---------- arayüz durumu ---------- */
-const ui = { view: 'home', listPk: null, form: null, detail: null };
+const ui = { view: 'home', listPk: null, form: null, detail: null, lf: { cat: null, src: null, q: '' } };
+
+/* ---------- hareket: sayfa girişi ve sayı sayma ---------- */
+let animNext = true;        // bir sonraki render'da giriş animasyonu oynasın mı
+const lastNum = new Map();  // sayı animasyonu için önceki değerler
+const cnt = (key, v, dec = 2) => `data-k="${key}" data-count="${v}" data-dec="${dec}"`;
+function countUp(el, fromZero) {
+  const key = el.dataset.k, to = parseFloat(el.dataset.count), dec = +el.dataset.dec;
+  const from = fromZero ? 0 : (lastNum.has(key) ? lastNum.get(key) : to);
+  lastNum.set(key, to);
+  if (!isFinite(to) || Math.abs(to - from) < 0.005 || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const fm = v => dec ? fmt(v) : fmt0(v), final = el.textContent, t0 = performance.now(), D = 650;
+  el.textContent = fm(from);
+  const step = t => {
+    if (!el.isConnected) return;
+    const p = Math.min(1, (t - t0) / D), e = 1 - Math.pow(1 - p, 3);
+    el.textContent = p < 1 ? fm(from + (to - from) * e) : final;
+    if (p < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
 
 function toast(m) {
   const t = $('#toast'); t.textContent = m; t.classList.add('show');
@@ -204,10 +224,10 @@ function home() {
       <button class="btn" data-act="rollover">Maaşı yatır ve ekstreleri öde</button></div>`;
   }
   h += `<div class="hero"><div class="lbl">Gerçek serbest paran</div>
-    <div class="big ${T.free < 0 ? 'neg' : ''}">${fmt(T.free)}</div>
+    <div class="big ${T.free < 0 ? 'neg' : ''}" ${cnt('free', T.free)}>${fmt(T.free)}</div>
     <div class="sub">Hesaplarda ${fmt(T.accSum)} − gelecek ekstreler ${fmt(T.dueSum)}</div></div>`;
   h += `<div class="grid2">
-    <div class="card"><div class="lbl">Günlük harcayabileceğin</div><div class="v">${fmt(T.daily)}</div><div class="s">${T.daysLeft} gün kaldı</div></div>
+    <div class="card"><div class="lbl">Günlük harcayabileceğin</div><div class="v" ${cnt('daily', T.daily)}>${fmt(T.daily)}</div><div class="s">${T.daysLeft} gün kaldı</div></div>
     <div class="card"><div class="lbl">Sonraki maaş</div><div class="v">${trDate(cutDate(T.nk))}</div><div class="s">${fmt(S.settings.salary)}</div></div></div>`;
 
   h += `<div class="grid2" style="margin-top:10px"><button class="btn sec" data-act="openSim">🤔 Alsam ne olur?</button><button class="btn sec" data-act="copyAll">📋 Claude için özet</button></div>`;
@@ -222,12 +242,12 @@ function home() {
 
   const P = periodSpend(T.pk), [a, b] = periodRange(T.pk);
   h += `<h2>Bu dönem · ${trDate(a)} – ${trDate(b)}</h2>
-    <div class="card"><div class="lbl">Toplam harcama</div><div class="v">${fmt(P.total)}</div></div>`;
+    <div class="card"><div class="lbl">Toplam harcama</div><div class="v" ${cnt('hspend', P.total)}>${fmt(P.total)}</div></div>`;
   const rows = Object.entries(P.by).sort((x, y) => y[1] - x[1]);
   if (!rows.length) h += '<div class="empty">Henüz harcama yok. + ile ekle.</div>';
   for (const [id, v] of rows) {
     const c = catOf(id);
-    h += `<div class="row" style="margin-top:8px"><div class="emo" style="background:${c.c}33">${c.e}</div>
+    h += `<div class="row tap" data-act="drill" data-cat="${id}" style="margin-top:8px"><div class="emo" style="background:${c.c}33">${c.e}</div>
       <div class="grow"><div class="t">${c.n}</div><div class="bar"><i style="width:${(v / P.total * 100).toFixed(1)}%;background:${c.c}"></i></div></div>
       <div class="amt">${fmt(v)}</div></div>`;
   }
@@ -235,16 +255,30 @@ function home() {
 }
 
 function list() {
-  const T = totals();
+  const T = totals(), lf = ui.lf;
   const pk = ui.listPk || T.pk;
-  const [a, b] = periodRange(pk), sa = ymd(a), sb = ymd(b);
-  const items = S.tx.filter(t => t.date >= sa && t.date <= sb)
-    .sort((x, y) => y.date.localeCompare(x.date) || y.id.localeCompare(x.id));
+  const [a, b] = periodRange(pk);
   const P = periodSpend(pk);
   let h = `<h1>İşlemler</h1><div class="pn"><button data-act="pk" data-d="-1">‹</button>
     <div style="text-align:center"><b>${trDate(a)} – ${trDateY(b)}</b><div class="lbl">Harcama ${fmt(P.total)}</div></div>
-    <button data-act="pk" data-d="1">›</button></div>`;
-  if (!items.length) h += '<div class="empty">Bu dönemde işlem yok.</div>';
+    <button data-act="pk" data-d="1">›</button></div>
+    <input class="search" data-q placeholder="Ara: not, kategori, tutar" value="${esc(lf.q)}">`;
+  if (lf.cat || lf.src)
+    h += `<div class="chips"><button class="chip on" data-act="clearf">${lf.cat ? `${catOf(lf.cat).e} ${catOf(lf.cat).n}` : srcLabel(lf.src)} ✕</button></div>`;
+  return h + `<div id="list-out">${listItems(pk)}</div>`;
+}
+function listItems(pk) {
+  const [a, b] = periodRange(pk), sa = ymd(a), sb = ymd(b), lf = ui.lf, q = (lf.q || '').trim().toLowerCase();
+  let items = S.tx.filter(t => t.date >= sa && t.date <= sb);
+  if (lf.cat) items = items.filter(t => t.type === 'exp' && t.cat === lf.cat);
+  if (lf.src) items = items.filter(t => t.type === 'exp' && t.src === lf.src);
+  if (q) items = items.filter(t => (t.note || '').toLowerCase().includes(q) || catOf(t.cat).n.toLowerCase().includes(q) ||
+    String(t.amount).includes(q) || String(t.amount).replace('.', ',').includes(q));
+  items.sort((x, y) => y.date.localeCompare(x.date) || y.id.localeCompare(x.id));
+  let h = '';
+  if (lf.cat || lf.src || q)
+    h += `<div class="lbl" style="margin:0 2px 8px">${items.length} işlem · harcama ${fmt(items.filter(t => t.type === 'exp').reduce((x, t) => x + t.amount, 0))}</div>`;
+  if (!items.length) h += `<div class="empty">${lf.cat || lf.src || q ? 'Eşleşen işlem yok.' : 'Bu dönemde işlem yok.'}</div>`;
   let last = '';
   for (const t of items) {
     if (t.date !== last) { last = t.date; h += `<div class="day">${trDateY(pd(t.date))}</div>`; }
@@ -295,8 +329,8 @@ function cards() {
 
 /* ---------- raporlar ---------- */
 const DAYS = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'];
-function barRow(label, v, max, color, extra = '') {
-  return `<div style="margin:8px 0"><div class="pn" style="margin:0"><span>${label}</span><b>${fmt(v)}${extra}</b></div>
+function barRow(label, v, max, color, extra = '', attr = '') {
+  return `<div ${attr ? `class="tap" ${attr}` : ''} style="margin:8px 0"><div class="pn" style="margin:0"><span>${label}</span><b>${fmt(v)}${extra}</b></div>
     <div class="bar"><i style="width:${max ? (v / max * 100).toFixed(1) : 0}%;background:${color}"></i></div></div>`;
 }
 function reports() {
@@ -307,17 +341,35 @@ function reports() {
   const P = periodSpend(pk);
   const nDays = Math.round((b - a) / 864e5) + 1;
   const elapsed = pk === T.pk ? Math.max(1, Math.round((pd(T.today) - a) / 864e5) + 1) : nDays;
+  const isNow = pk === T.pk;
+  // Gün gün harcama ve işlem sayıları
+  const dly = Array(nDays).fill(0);
+  for (const t of ex) dly[Math.round((pd(t.date) - a) / 864e5)] += t.amount;
+  const dayDate = i => new Date(a.getFullYear(), a.getMonth(), a.getDate() + i);
+  const incSum = S.tx.filter(t => t.type === 'inc' && t.date >= sa && t.date <= sb).reduce((x, t) => x + t.amount, 0);
+  const avgTx = ex.length ? P.total / ex.length : 0, bigTx = ex.length ? Math.max(...ex.map(t => t.amount)) : 0;
+  let peak = 0, peakI = 0; dly.forEach((v, i) => { if (v > peak) { peak = v; peakI = i; } });
 
   let h = `<h1>Raporlar</h1><div class="pn"><button data-act="rpk" data-d="-1">‹</button>
     <div style="text-align:center"><b>${trDate(a)} – ${trDateY(b)}</b></div>
     <button data-act="rpk" data-d="1">›</button></div>
     <div class="grid2">
-      <div class="card"><div class="lbl">Toplam harcama</div><div class="v">${fmt(P.total)}</div><div class="s">${ex.length} işlem</div></div>
-      <div class="card"><div class="lbl">Günlük ortalama</div><div class="v">${fmt(P.total / elapsed)}</div><div class="s">${elapsed} gün üzerinden</div></div></div>`;
+      <div class="card"><div class="lbl">Toplam harcama</div><div class="v" ${cnt('rtotal', P.total)}>${fmt(P.total)}</div><div class="s">${ex.length} işlem</div></div>
+      <div class="card"><div class="lbl">Günlük ortalama</div><div class="v" ${cnt('ravg', P.total / elapsed)}>${fmt(P.total / elapsed)}</div><div class="s">${elapsed} gün üzerinden</div></div></div>`;
   if (!P.total) return h + '<div class="empty">Bu dönemde harcama yok.</div>';
+
+  // İkinci özet satırı: ortalama işlem + net (gelir varsa) ya da en yoğun gün
+  h += `<div class="grid2" style="margin-top:10px"><div class="card"><div class="lbl">Ortalama işlem</div><div class="v" ${cnt('ravgtx', avgTx)}>${fmt(avgTx)}</div><div class="s">en büyük ${fmt(bigTx)}</div></div>`;
+  if (incSum > 0) {
+    const net = incSum - P.total;
+    h += `<div class="card"><div class="lbl">Net (gelir − harcama)</div><div class="v ${net < 0 ? 'bad' : 'ok'}" ${cnt('rnet', net)}>${fmt(net)}</div><div class="s">gelir ${fmt(incSum)} · harcama oranı ${pct(P.total / incSum)}</div></div></div>`;
+  } else {
+    h += `<div class="card"><div class="lbl">En yoğun gün</div><div class="v">${trDate(dayDate(peakI))}</div><div class="s">${fmt(peak)} harcandı</div></div></div>`;
+  }
 
   // Kategori dağılımı (halka grafik)
   const cats = Object.entries(P.by).sort((x, y) => y[1] - x[1]);
+  const prevBy = periodSpend(addM(pk, -1)).by;
   const R = 40, C = 2 * Math.PI * R;
   let off = 0, arcs = '';
   for (const [id, v] of cats) {
@@ -326,15 +378,20 @@ function reports() {
     off += len;
   }
   h += `<h2>Kategoriler</h2><div class="card"><div style="display:flex;align-items:center;gap:14px">
-    <svg width="120" height="120" viewBox="0 0 120 120" style="flex:none">${arcs}</svg>
-    <div style="flex:1;min-width:0">${cats.slice(0, 5).map(([id, v]) => `<div class="pn" style="margin:3px 0;font-size:13px"><span>${catOf(id).e} ${catOf(id).n}</span><b>%${Math.round(v / P.total * 100)}</b></div>`).join('')}</div></div>
-    ${cats.map(([id, v]) => barRow(`${catOf(id).e} ${catOf(id).n}`, v, cats[0][1], catOf(id).c)).join('')}</div>`;
+    <svg class="donut" width="120" height="120" viewBox="0 0 120 120" style="flex:none">${arcs}</svg>
+    <div style="flex:1;min-width:0">${cats.slice(0, 5).map(([id, v]) => `<div class="pn tap" data-act="drill" data-cat="${id}" style="margin:3px 0;font-size:13px"><span>${catOf(id).e} ${catOf(id).n}</span><b>%${Math.round(v / P.total * 100)}</b></div>`).join('')}</div></div>
+    ${cats.map(([id, v]) => {
+      const pv = prevBy[id] || 0;
+      const ch = pv > 0 ? ` <span class="lbl" style="color:${v > pv ? 'var(--bad)' : 'var(--ok)'}">${v > pv ? '↑' : '↓'}%${Math.abs(Math.round((v - pv) / pv * 100))}</span>` : '';
+      return barRow(`${catOf(id).e} ${catOf(id).n}`, v, cats[0][1], catOf(id).c, ch, `data-act="drill" data-cat="${id}"`);
+    }).join('')}
+    <div class="lbl" style="margin-top:6px">Okla gösterilen değişim önceki döneme göredir. Bir kategoriye dokununca harcamaları listelenir.</div></div>`;
 
   // Kaynak bazında
   const bySrc = {};
   for (const t of ex) bySrc[t.src] = (bySrc[t.src] || 0) + t.amount;
   const srcs = Object.entries(bySrc).sort((x, y) => y[1] - x[1]);
-  h += `<h2>Nereden ödendi</h2><div class="card">${srcs.map(([s, v]) => barRow(srcLabel(s), v, srcs[0][1], s.startsWith('card') ? '#a78bfa' : '#38bdf8', ` <span class="lbl">%${Math.round(v / P.total * 100)}</span>`)).join('')}</div>`;
+  h += `<h2>Nereden ödendi</h2><div class="card">${srcs.map(([s, v]) => barRow(srcLabel(s), v, srcs[0][1], s.startsWith('card') ? '#a78bfa' : '#38bdf8', ` <span class="lbl">%${Math.round(v / P.total * 100)}</span>`, `data-act="drill" data-src="${s}"`)).join('')}</div>`;
 
   // Günlük harcama grafiği
   const daily = Array(nDays).fill(0);
@@ -342,10 +399,42 @@ function reports() {
   const dmax = Math.max(...daily, 1), bw = 300 / nDays;
   const todayIdx = pk === T.pk ? Math.round((pd(T.today) - a) / 864e5) : -1;
   h += `<h2>Günlük harcama</h2><div class="card"><svg viewBox="0 0 300 90" width="100%" style="display:block">
-    ${daily.map((v, i) => `<rect x="${(i * bw + 1).toFixed(1)}" y="${(80 - v / dmax * 78).toFixed(1)}" width="${(bw - 2).toFixed(1)}" height="${(v / dmax * 78).toFixed(1)}" rx="2" fill="${i === todayIdx ? '#fbbf24' : '#38bdf8'}"/>`).join('')}
+    ${daily.map((v, i) => `<rect class="b" x="${(i * bw + 1).toFixed(1)}" y="${(80 - v / dmax * 78).toFixed(1)}" width="${(bw - 2).toFixed(1)}" height="${(v / dmax * 78).toFixed(1)}" rx="2" fill="${i === todayIdx ? '#fbbf24' : '#38bdf8'}"/>`).join('')}
     <line x1="0" y1="80.5" x2="300" y2="80.5" stroke="#334155"/></svg>
     <div class="pn" style="margin:4px 0 0"><span class="lbl">${trDate(a)}</span><span class="lbl">En yüksek gün: ${fmt(dmax)}</span><span class="lbl">${trDate(b)}</span></div>
 </div>`;
+
+  // Birikimli harcama: bu dönem ile önceki dönem yan yana
+  const prevPk = addM(pk, -1), [ppa, ppb] = periodRange(prevPk), pN = Math.round((ppb - ppa) / 864e5) + 1;
+  const pdly = Array(pN).fill(0);
+  for (const t of S.tx) if (t.type === 'exp' && t.date >= ymd(ppa) && t.date <= ymd(ppb)) pdly[Math.round((pd(t.date) - ppa) / 864e5)] += t.amount;
+  const cum = arr => { let s = 0; return arr.map(v => (s += v)); };
+  const cc = cum(dly).slice(0, elapsed), pc = cum(pdly), prevTotal = pc[pN - 1];
+  const nx = Math.max(nDays, pN), ymax = Math.max(cc[cc.length - 1], prevTotal, 1), lastI = cc.length - 1;
+  const X = i => (i / (nx - 1) * 296 + 2).toFixed(1), Y = v => (98 - v / ymax * 90).toFixed(1);
+  const path = arr => arr.map((v, i) => `${i ? 'L' : 'M'}${X(i)} ${Y(v)}`).join(' ');
+  h += `<h2>Birikimli harcama</h2><div class="card"><svg viewBox="0 0 300 104" width="100%" style="display:block">
+    <line x1="0" y1="98.5" x2="300" y2="98.5" stroke="#334155"/>
+    ${prevTotal > 0 ? `<path d="${path(pc)}" fill="none" stroke="#64748b" stroke-width="2" stroke-dasharray="4 4"/>` : ''}
+    <path d="${path(cc)} L${X(lastI)} 98 L${X(0)} 98 Z" fill="#38bdf8" fill-opacity=".15"/>
+    <path class="draw" pathLength="1" d="${path(cc)}" fill="none" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="${X(lastI)}" cy="${Y(cc[lastI])}" r="4" fill="#fbbf24"/></svg>
+    <div class="pn" style="margin:6px 0 0"><span class="lbl"><i class="ldot" style="background:#38bdf8"></i>${isNow ? 'Bu dönem' : 'Seçili dönem'} ${fmt(cc[lastI])}</span>${prevTotal > 0 ? `<span class="lbl"><i class="ldot" style="background:#64748b"></i>Önceki dönem ${fmt(prevTotal)}</span>` : ''}</div></div>`;
+
+  // Tempo ve dönem sonu tahmini (sadece şu anki dönemde)
+  if (isNow && elapsed >= 2) {
+    const prevSame = pc[Math.min(elapsed, pN) - 1] || 0, avgNow = P.total / elapsed;
+    const proj = P.total + avgNow * (nDays - elapsed), freeEnd = T.free - avgNow * T.daysLeft;
+    const cmp = (cur, prev) => prev > 0 ? ` <span class="lbl" style="color:${cur > prev ? 'var(--bad)' : 'var(--ok)'}">${cur > prev ? '↑' : '↓'}%${Math.abs(Math.round((cur - prev) / prev * 100))}</span>` : '';
+    const rowp = (l, v, extra = '') => `<div class="pn" style="margin:8px 0"><span>${l}</span><b>${v}${extra}</b></div>`;
+    h += `<h2>Tempo ve tahmin</h2><div class="card">
+      ${rowp('Şu ana kadar', fmt(P.total), cmp(P.total, prevSame))}
+      ${prevSame > 0 ? `<div class="lbl" style="margin:-4px 0 6px">Önceki dönemin aynı gününe kadar ${fmt(prevSame)} harcamıştın.</div>` : ''}
+      ${rowp('Günlük hızın', fmt(avgNow), cmp(avgNow, prevTotal / pN))}
+      ${rowp('Dönem sonu tahmini harcama', '≈ ' + fmt(proj), cmp(proj, prevTotal))}
+      ${rowp(`${trDate(cutDate(T.nk))} günü tahmini serbest para`, `<span class="${freeEnd < 0 ? 'bad' : 'ok'}">≈ ${fmt(freeEnd)}</span>`)}
+      <div class="lbl">Kalan günlerde şimdiki ortalama hızla harcarsan. Bilinen taksitler ve ekstreler serbest paradan zaten düşülmüş durumda.</div></div>`;
+  }
 
   // Dönem karşılaştırma (son 6 dönem)
   const hist = [];
@@ -363,8 +452,42 @@ function reports() {
   const wmax = Math.max(...wd, 1);
   h += `<h2>Haftanın günleri</h2><div class="card">${wd.map((v, i) => barRow(DAYS[i], v, wmax, '#34d399')).join('')}</div>`;
 
+  // İçgörüler
+  const catCount = {};
+  for (const t of ex) catCount[t.cat] = (catCount[t.cat] || 0) + 1;
+  const topCnt = Object.entries(catCount).sort((x, y) => y[1] - x[1])[0];
+  let wkS = 0, wkN = 0, weS = 0, weN = 0;
+  for (let i = 0; i < elapsed; i++) { const g = dayDate(i).getDay(); if (g === 0 || g === 6) { weS += dly[i]; weN++; } else { wkS += dly[i]; wkN++; } }
+  const small = ex.filter(t => t.amount < 100), instSum = ex.filter(t => t.inst > 1).reduce((x, t) => x + t.amount, 0);
+  const irow = (l, v) => `<div class="pn" style="margin:8px 0"><span>${l}</span><b>${v}</b></div>`;
+  h += '<h2>İçgörüler</h2><div class="card">'
+    + irow('En çok harcanan gün', `${trDate(dayDate(peakI))} · ${fmt(peak)}`)
+    + (topCnt ? irow('En sık harcama kategorisi', `${catOf(topCnt[0]).e} ${catOf(topCnt[0]).n} · ${topCnt[1]} işlem`) : '')
+    + (wkN && weN ? irow('Günlük ort. hafta içi / sonu', `${fmt0(wkS / wkN)} / ${fmt0(weS / weN)}`) : '')
+    + irow('Küçük harcamalar (100 ₺ altı)', `${small.length} işlem · ${fmt0(small.reduce((x, t) => x + t.amount, 0))}`)
+    + (instSum > 0 ? irow('Taksitli alışverişlerin payı', pct(instSum / P.total)) : '')
+    + '</div>';
+
+  // Sık harcamalar (aynı notla tekrar eden)
+  const nm = {};
+  for (const t of ex) {
+    const k = (t.note || '').trim().toLowerCase(); if (!k) continue;
+    if (!nm[k]) nm[k] = { n: t.note.trim(), c: 0, s: 0 };
+    nm[k].c++; nm[k].s += t.amount;
+  }
+  const freq = Object.values(nm).filter(x => x.c >= 2).sort((x, y) => y.s - x.s).slice(0, 5);
+  if (freq.length) h += '<h2>Sık harcamalar</h2>' + freq.map(x => `<div class="row tap" data-act="drill" data-q="${esc(x.n)}"><div class="emo" style="background:#33415599">🔁</div><div class="grow"><div class="t">${esc(x.n)}</div><div class="m">${x.c} kez · ortalama ${fmt(x.s / x.c)}</div></div><div class="amt">${fmt(x.s)}</div></div>`).join('');
+
+  // Gelecek ekstreler (bilinen kayıtlar): taksit ve diğer parçalar
+  if (isNow) {
+    const ms = metrics().months.slice(0, 6).filter(m => m.total > 0.5), mx = Math.max(...ms.map(m => m.total), 1), sal = S.settings.salary || 0;
+    if (ms.length) h += `<h2>Gelecek ekstreler</h2><div class="card">${ms.map(m => `<div style="margin:9px 0"><div class="pn" style="margin:0"><span>${trDate(cutDate(m.k))}${sal > 0 ? ` <span class="lbl">maaşın ${pct(m.total / sal)}'i</span>` : ''}</span><b>${fmt(m.total)}</b></div>
+      <div class="bar st"><i style="width:${((m.total - m.inst) / mx * 100).toFixed(1)}%;background:#38bdf8"></i><i style="width:${(m.inst / mx * 100).toFixed(1)}%;background:#a78bfa"></i></div></div>`).join('')}
+      <div class="lbl"><i class="ldot" style="background:#38bdf8"></i>Harcamalar <i class="ldot" style="background:#a78bfa;margin-left:10px"></i>Taksitler · yalnızca bildiğim kayıtlar</div></div>`;
+  }
+
   // En büyük harcamalar
-  const top = [...ex].sort((x, y) => y.amount - x.amount).slice(0, 5);
+  const top =[...ex].sort((x, y) => y.amount - x.amount).slice(0, 5);
   h += '<h2>En büyük harcamalar</h2>';
   for (const t of top) {
     const c = catOf(t.cat);
@@ -398,7 +521,11 @@ function settings() {
 
 const views = { home, list, reports, cards, settings, sim };
 function render() {
-  $('#app').innerHTML = views[ui.view]();
+  const app = $('#app'), full = animNext; animNext = false;
+  app.innerHTML = views[ui.view]();
+  app.classList.toggle('anim', full);
+  if (full) [...app.children].forEach((el, i) => el.style.setProperty('--i', Math.min(i, 14)));
+  app.querySelectorAll('[data-count]').forEach(el => countUp(el, full));
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.v === ui.view));
 }
 
@@ -430,14 +557,24 @@ function addModal() {
   <button class="btn" data-act="save">Kaydet</button><button class="btn sec" data-act="close">Vazgeç</button></div>`;
   return h;
 }
-function openModal(html) { const m = $('#modal'); m.innerHTML = html; m.classList.add('open'); }
-function closeModal() { $('#modal').classList.remove('open'); ui.form = null; }
+function openModal(html) {
+  const m = $('#modal'), fresh = !m.classList.contains('open'); // animasyon sadece ilk açılışta
+  m.innerHTML = html; m.classList.add('open'); m.classList.toggle('fresh', fresh);
+}
+function closeModal() { const m = $('#modal'); m.classList.remove('open', 'fresh'); ui.form = null; }
 
 /* ---------- eylemler ---------- */
 const A = {
-  nav: d => { ui.view = d.v; ui.listPk = null; ui.repPk = null; render(); window.scrollTo(0, 0); },
-  rpk: d => { const T = totals(); ui.repPk = addM(ui.repPk || T.pk, +d.d); render(); },
-  pk: d => { const T = totals(); ui.listPk = addM(ui.listPk || T.pk, +d.d); render(); },
+  nav: d => { ui.view = d.v; ui.listPk = null; ui.repPk = null; ui.lf = { cat: null, src: null, q: '' }; animNext = true; render(); window.scrollTo(0, 0); },
+  rpk: d => { const T = totals(); ui.repPk = addM(ui.repPk || T.pk, +d.d); animNext = true; render(); },
+  pk: d => { const T = totals(); ui.listPk = addM(ui.listPk || T.pk, +d.d); animNext = true; render(); },
+  // Kategoriye / kaynağa / nota dokununca o harcamaların listesine in
+  drill: d => {
+    ui.lf = { cat: d.cat || null, src: d.src || null, q: d.q || '' };
+    ui.listPk = ui.view === 'reports' ? (ui.repPk || null) : null;
+    ui.view = 'list'; animNext = true; render(); window.scrollTo(0, 0);
+  },
+  clearf: () => { ui.lf.cat = null; ui.lf.src = null; render(); },
   openAdd: () => { ui.form = newForm(); openModal(addModal()); setTimeout(() => $('#f-amount')?.focus(), 50); },
   ftype: d => { ui.form.type = d.v; openModal(addModal()); },
   fset: d => {
@@ -507,7 +644,13 @@ document.addEventListener('click', e => {
 // Düzenlemeden vazgeçilirse silinen işlemi geri koy
 function restoreEdit() { if (ui.form?.orig) { S.tx.push(ui.form.orig); persist(); render(); } }
 
-document.addEventListener('input', e => { const k = e.target.dataset.f; if (k && ui.form) ui.form[k] = e.target.value; });
+document.addEventListener('input', e => {
+  const k = e.target.dataset.f; if (k && ui.form) ui.form[k] = e.target.value;
+  if (e.target.dataset.q !== undefined) { // listede arama: sadece sonuç alanını yenile, klavye açık kalsın
+    ui.lf.q = e.target.value;
+    const o = $('#list-out'); if (o) o.innerHTML = listItems(ui.listPk || totals().pk);
+  }
+});
 document.addEventListener('change', e => {
   const t = e.target, a = t.dataset.actChange;
   if (t.id === 'file') {
@@ -774,7 +917,7 @@ async function copyOut(text, share) {
     setTimeout(() => $('#cp')?.select(), 50);
   }
 }
-A.openSim = () => { if (!ui.sim) ui.sim = newSim(); ui.view = 'sim'; render(); window.scrollTo(0, 0); };
+A.openSim = () => { if (!ui.sim) ui.sim = newSim(); ui.view = 'sim'; animNext = true; render(); window.scrollTo(0, 0); };
 A.sset = d => { ui.sim[d.k] = d.k === 'inst' ? +d.v : d.v; if (d.k === 'src' && !d.v.startsWith('card:')) ui.sim.inst = 1; render(); };
 A.copyAll = () => copyOut(claudeText(null));
 A.copySim = () => { if (num(ui.sim.price) <= 0) return toast('Önce fiyatı yaz'); copyOut(claudeText(simulate(ui.sim))); };
@@ -810,8 +953,21 @@ A.finishSetup = () => {
   S.openingPeriodKey = pk; S.openingCutKey = addM(pk, 1);
   for (const a of S.accounts) a.opening = v('su-acc-' + a.id);
   for (const c of S.cards) { c.limit = v('su-lim-' + c.id); c.openingDebt = v('su-debt-' + c.id); }
-  S.setupDone = true; persist(); closeModal(); render(); toast('Hazır!');
+  S.setupDone = true; persist(); closeModal(); animNext = true; render(); toast('Hazır!');
 };
+
+/* ---------- yana kaydırarak dönem değiştir (İşlemler ve Raporlar) ---------- */
+let sw0 = null;
+document.addEventListener('touchstart', e => {
+  sw0 = (e.touches.length === 1 && !e.target.closest('input,textarea,select')) ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+}, { passive: true });
+document.addEventListener('touchend', e => {
+  if (!sw0 || $('#modal').classList.contains('open')) { sw0 = null; return; }
+  const t = e.changedTouches[0], dx = t.clientX - sw0.x, dy = t.clientY - sw0.y; sw0 = null;
+  if (Math.abs(dx) < 70 || Math.abs(dy) > 45 || Math.abs(dx) < Math.abs(dy) * 2) return;
+  const d = dx < 0 ? 1 : -1;
+  if (ui.view === 'list') A.pk({ d }); else if (ui.view === 'reports') A.rpk({ d });
+}, { passive: true });
 
 /* ---------- başlat ---------- */
 S = load();
